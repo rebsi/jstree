@@ -79,7 +79,19 @@
 		 * @name $.jstree.defaults.search.search_callback
 		 * @plugin search
 		 */
-		search_callback : false
+		search_callback : false,
+		/**
+		 * If set greater 0, the search is aborted after search_timeout ms. Default is 0.
+		 * @name $.jstree.defaults.search.search_timeout
+		 * @plugin search
+		 */
+		search_timeout : 0,
+		/**
+		 * If set to a function it wil be called if the search was aborted due to the search_timeout. Default is `false`.
+		 * @name $.jstree.defaults.search.search_timeout_callback
+		 * @plugin search
+		 */
+		search_timeout_callback : false
 	};
 
 	$.jstree.plugins.search = function (options, parent) {
@@ -93,6 +105,8 @@
 			this._data.search.som = false;
 			this._data.search.smc = false;
 			this._data.search.hdn = [];
+
+			this._data.search.searchStartTime = 0;
 
 			this.element
 				.on("search.jstree", $.proxy(function (e, data) {
@@ -141,7 +155,8 @@
 				m = this._model.data,
 				f = null,
 				r = [],
-				p = [], i, j;
+				p = [], i, j,
+		    	_this = this;
 			if(this._data.search.res.length && !append) {
 				this.clear_search();
 			}
@@ -190,16 +205,35 @@
 			}
 
 			f = new $.vakata.search(str, true, { caseSensitive : s.case_sensitive, fuzzy : s.fuzzy });
+
+			this._data.search.searchStartTime = new Date().getTime();
+
 			$.each(m[inside ? inside : $.jstree.root].children_d, function (ii, i) {
 				var v = m[i];
 				if(v.text && (!s.search_leaves_only || (v.state.loaded && v.children.length === 0)) && ( (s.search_callback && s.search_callback.call(this, str, v)) || (!s.search_callback && f.search(v.text).isMatch) ) ) {
 					r.push(i);
 					p = p.concat(v.parents);
 				}
+
+			    if (_this._is_timeout(ii)) {
+			        r = [];
+			        return false;
+			    }
 			});
+
 			if(r.length) {
 				p = $.vakata.array_unique(p);
-				this._search_open(p);
+
+				for (i = 0, j = p.length; i < j; i++) {
+				    if (p[i] !== $.jstree.root && m[p[i]] && this.open_node(p[i], null, 0) === true) {
+				        this._data.search.opn.push(p[i]);
+				    }
+
+				    if (this._is_timeout()) {
+				        break;
+				    }
+				}
+
 				if(!append) {
 					this._data.search.dom = $(this.element[0].querySelectorAll('#' + $.map(r, function (v) { return "0123456789".indexOf(v[0]) !== -1 ? '\\3' + v[0] + ' ' + v.substr(1).replace($.jstree.idregex,'\\$&') : v.replace($.jstree.idregex,'\\$&'); }).join(', #')));
 					this._data.search.res = r;
@@ -252,39 +286,21 @@
 			this._data.search.opn = [];
 			this._data.search.dom = $();
 		};
-		/**
-		 * opens nodes that need to be opened to reveal the search results. Used only internally.
-		 * @private
-		 * @name _search_open(d)
-		 * @param {Array} d an array of node IDs
-		 * @plugin search
-		 */
-		this._search_open = function (d) {
-		    var t = this;
 
-		    var potentialNewWork;
-		    do {
-		        potentialNewWork = false;
-		        for (var i = 0; i < d.length;) {
-		            var v = d[i];
-		            if (v !== $.jstree.root) {
-		                try { v = $('#' + v.replace($.jstree.idregex, '\\$&'), t.element); } catch (ignore) { }
-
-		                if (v && v.length) {
-		                    if (t.is_closed(v)) {
-		                        t._data.search.opn.push(v[0].id);
-		                        t.open_node(v, null, 0);
-		                        potentialNewWork = true;
-
-		                        d.splice(i, 1);
-		                        continue;
-		                    }
-		                }
-		            }
-		            i++;
-		        }
-		    } while (potentialNewWork);
-		};
+		this._is_timeout = function (i) {
+			var search_timeout = this.settings.search.search_timeout
+			if (search_timeout && !(i & 3)) { // test each 4th time
+			    var timeDelta = new Date().getTime() - this._data.search.searchStartTime;
+			    if (search_timeout < timeDelta) {
+					var search_timeout_callback = this.settings.search.search_timeout_callback;
+					if (search_timeout_callback) {
+					    search_timeout_callback.call(this, timeDelta);
+					}
+					return true;
+				}
+			}
+			return false;
+		}
 
 		this.redraw_node = function(obj, deep, callback, force_render) {
 			obj = parent.redraw_node.apply(this, arguments);
